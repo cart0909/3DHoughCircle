@@ -4,12 +4,13 @@ CONFIG -= app_bundle
 CONFIG -= qt
 
 SOURCES += main.cpp \
-    createcirclepointcloud.cpp \
-    HoughCircle.cpp
+    HoughCircle.cpp \
+    CreateCirclePointCloud.cpp
 
 HEADERS += \
-    createcirclepointcloud.h \
-    HoughCircle.h
+    HoughCircle.h \
+    util.h \
+    CreateCirclePointCloud.h
 
 unix: CONFIG += link_pkgconfig
 unix: PKGCONFIG += eigen3

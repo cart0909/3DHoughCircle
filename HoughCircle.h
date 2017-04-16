@@ -4,7 +4,12 @@
 #include <iostream>
 #include <unordered_map>
 #include <functional>
-#include "createcirclepointcloud.h"
+#include "CreateCirclePointCloud.h"
+#include "util.h"
+
+#ifndef USE_OLD
+#define USE_OLD 0
+#endif
 
 class RCenter {
 public:
@@ -12,23 +17,9 @@ public:
     friend bool operator==(const RCenter& lhs, const RCenter& rhs);
     friend std::hash<RCenter>;
 
-    RCenter(float r, float cx, float cy, float cz) {
-        _r = r;
-        _gridx = cx/res;
-        _gridy = cy/res;
-        _gridz = cz/res;
-    }
+    RCenter(float r, float cx, float cy, float cz);
 
-    inline bool operator<(const RCenter& rhs)
-    {
-        if(_r != rhs._r)
-            return _r < rhs._r;
-        else if(_gridx != rhs._gridx)
-            return _gridx < rhs._gridx;
-        else if(_gridy != rhs._gridy)
-            return _gridy < rhs._gridy;
-        return _gridz < rhs._gridz;
-    }
+    bool operator<(const RCenter& rhs);
 
     static float res;
     float _r;
@@ -36,21 +27,10 @@ public:
     int _gridy;
     int _gridz;
 };
-
-inline bool operator<(const RCenter& lhs, const RCenter& rhs) {
-    if(lhs._r != rhs._r)
-        return lhs._r < rhs._r;
-    else if(lhs._gridx != rhs._gridx)
-        return lhs._gridx < rhs._gridx;
-    else if(lhs._gridy != rhs._gridy)
-        return lhs._gridy < rhs._gridy;
-    return lhs._gridz < rhs._gridz;
-}
-
-inline bool operator==(const RCenter& lhs, const RCenter& rhs) {
-    return (lhs._r == rhs._r) && (lhs._gridx==rhs._gridx) && (lhs._gridy==rhs._gridy) && (lhs._gridz == rhs._gridz);
-}
-
+// for map
+bool operator<(const RCenter& lhs, const RCenter& rhs);
+// for hash, but hmm.. very slow...
+bool operator==(const RCenter& lhs, const RCenter& rhs);
 namespace std {
 template<>
 class hash<RCenter> {
@@ -60,35 +40,92 @@ public:
     }
 };
 }
+// end RCenter
 
 class HoughCircle
 {
 public:
     HoughCircle();
-    HoughCircle(float rmin, float rmax, float rres, float thres, float phires) :
+#if USE_OLD
+    HoughCircle(float rmin, float rmax, float rres, float thres, float phires, float gridres) :
         _rmin(rmin), _rmax(rmax), _rres(rres), _thres(thres), _phires(phires)
     {
-
+        RCenter::res = gridres;
     }
-
     using Accumulator = std::map<RCenter, int>;
 
-    void transform(const Vector3fs& points, Accumulator& accu) {
+    void transform(const std::vector<Point3>& points, Accumulator& accu) {
         for(const auto& eachPoint : points) {
             for(float r = _rmin; r <= _rmax; r += _rres) {
                 for(float th = 0.0f; th <= 2.0f*M_PI; th+= _thres) {
                     for(float phi = 0.0f; phi <= M_PI; phi += _phires) {
-                        auto cx = eachPoint(0) - r*cos(th)*sin(phi);
-                        auto cy = eachPoint(1) - r*sin(th)*sin(phi);
-                        auto cz = eachPoint(2) - r*cos(phi);
+                        auto cx = eachPoint.x - r*cos(th)*sin(phi);
+                        auto cy = eachPoint.y - r*sin(th)*sin(phi);
+                        auto cz = eachPoint.z - r*cos(phi);
                         accu[RCenter(r, cx, cy, cz)]++;
                     }
                 }
             }
         }
     }
+#else
+    HoughCircle(float rmin, float rmax, float rres, float thres, float phires, float gridres) :
+        _rmin(rmin), _rmax(rmax), _gridres(gridres), _rres(rres), _thres(thres), _phires(phires)
+    {
 
-    float _rmin, _rmax;
+    }
+
+    class Accumulator {
+    public:
+        friend HoughCircle;
+        Accumulator():bestRIdx(-1.0f), bestGridxIdx(-1), bestGridyIdx(-1), bestGridzIdx(-1), maxCount(0), _gridresPtr(nullptr)
+        {}
+
+        void insert(float* gridresPtr, float r, float cx, float cy, float cz) {
+            if(_gridresPtr != gridresPtr)
+                _gridresPtr = gridresPtr;
+            auto invGridRes = 1.0f/(*_gridresPtr);
+            int gridx = cx*invGridRes, gridy = cy*invGridRes, gridz = cz*invGridRes;
+            int countNum = ++_accumulator[r][gridx][gridy][gridz];
+            if(countNum > maxCount) {
+                maxCount = countNum;
+                bestRIdx = r;
+                bestGridxIdx = gridx;
+                bestGridyIdx = gridy;
+                bestGridzIdx = gridz;
+            }
+        }
+
+        void report() {
+            auto gridres = *_gridresPtr;
+            std::cout << "r: " << bestRIdx << " cx: " << bestGridxIdx*gridres << " cy:" << bestGridyIdx*gridres <<
+                         " cz: " << bestGridzIdx*gridres << " count: " << maxCount << std::endl;
+        }
+
+        float bestRIdx;
+        int bestGridxIdx, bestGridyIdx, bestGridzIdx;
+        int maxCount;
+        float* _gridresPtr;
+        std::map<float, std::map<int, std::map<int, std::map<int, int>>>> _accumulator;
+    };
+
+    void transform(const std::vector<Point3>& points, Accumulator& accu) {
+        for(const auto& eachPoint : points) {
+            for(float r = _rmin; r <= _rmax; r += _rres) {
+                for(float th = 0.0f; th <= 2.0f*M_PI; th+= _thres) {
+                    for(float phi = 0.0f; phi <= M_PI; phi += _phires) {
+                        auto cx = eachPoint.x - r*cos(th)*sin(phi);
+                        auto cy = eachPoint.y - r*sin(th)*sin(phi);
+                        auto cz = eachPoint.z - r*cos(phi);
+                        accu.insert(&_gridres, r, cx, cy, cz);
+                    }
+                }
+            }
+        }
+    }
+#endif
+
+    float _rmin, _rmax, _gridres;
     float _rres, _thres, _phires;
 };
 
